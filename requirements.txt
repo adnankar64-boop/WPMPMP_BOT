@@ -1,4 +1,3 @@
-pyTelegramBotAPI
-Flask
+flask
 requests
-flask-sqlalchemy
+pyTelegramBotAPI
