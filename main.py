@@ -58,7 +58,8 @@ def send_whale_alert():
             print(f"[Parse error] {e}")
 
     message = (
-        "📊 *Whale Status (1H)*
+       "🐋Whale Status (1H)"
+
 
 " +
         "
