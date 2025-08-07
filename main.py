@@ -58,17 +58,15 @@ def send_whale_alert():
             print(f"[Parse error] {e}")
 
     message = (
-       "🐋Whale Status (1H)"
+        "🐋 Whale Status (1H)\n" + "\n".join(alerts)
+    ) if alerts else "⚠️ No notable whale positions."
 
-
-" +
-        "
-".join(alerts)) if alerts else "⚠️ No notable whale positions."
     try:
         bot.send_message(ADMIN_ID, message, parse_mode="Markdown")
     except Exception as e:
         print(f"[Telegram error] {e}")
 
+# ───── Background Loop ─────
 def start_loop():
     while True:
         try:
