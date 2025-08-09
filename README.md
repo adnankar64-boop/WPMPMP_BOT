@@ -29,7 +29,7 @@
 در فایل `.env` یا به صورت Environment Variables تعریف شود:
 - `BOT_TOKEN` = توکن ربات تلگرام شما
 - `COINGLASS_API_KEY` = کلید API سایت CoinGlass
-
+- 'ETHERSCAN_API_KEY' = کلید API  سایت  ETHERSCAN
 ---
 
 ## مجوز
