@@ -7,7 +7,7 @@ import telebot
 from flask import Flask
 
 # -------------- ??????? ?????? --------------
-BOT_TOKEN = "7762972292:AAHrFaISQDfAycGjAqMqqofVjpouNF4z4Cg"
+BOT_TOKEN = "7762972292:AAEkDx853saWRuDpo59TwN_Wa0uW1mY-AIo"
 ETHERSCAN_API_KEY = "VZFDUWB3YGQ1YCDKTCU1D6DDSS"
 COINGLASS_API_KEY = "6e5da618d74344f69c0e77ad9b3643c0"
 
