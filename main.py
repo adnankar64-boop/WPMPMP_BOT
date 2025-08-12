@@ -4,9 +4,9 @@ import json
 import threading
 import requests
 import telebot
-from flask import Flask
+from flask import Flask, request
 
-# -------------- ??????? ?????? --------------
+# ---------------- تنظیمات ----------------
 BOT_TOKEN = "7762972292:AAEkDx853saWRuDpo59TwN_Wa0uW1mY-AIo"
 ETHERSCAN_API_KEY = "VZFDUWB3YGQ1YCDKTCU1D6DDSS"
 COINGLASS_API_KEY = "6e5da618d74344f69c0e77ad9b3643c0"
@@ -15,10 +15,10 @@ bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 DATA_FILE = "data.json"
-CHECK_INTERVAL = 600         # ?? 10 ????? ?????????? ???? ?? ?? ???
-SIGNAL_INTERVAL = 3600       # ?? 1 ???? ?????? ??????
+CHECK_INTERVAL = 600         # هر 10 دقیقه بررسی تراکنش
+SIGNAL_INTERVAL = 3600       # هر 1 ساعت بررسی سیگنال
 
-# -------------- ???????? ? ????? ???? ??????? --------------
+# ---------------- توابع ذخیره/خواندن ----------------
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
@@ -31,12 +31,19 @@ def save_data(data):
 
 user_data = load_data()
 
-# -------------- ??????? ????? --------------
+# ---------------- صفحه اصلی ----------------
 @app.route('/')
 def home():
-    return "? Whale + Signal Bot is Running"
+    return "✅ Whale + Signal Bot is Running"
 
-# -------------- ?????? ?????? ?????? --------------
+# ---------------- هندلر وبهوک ----------------
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "ok", 200
+
+# ---------------- توابع کمکی ----------------
 def get_eth_balance(wallet):
     try:
         url = "https://api.etherscan.io/api"
@@ -55,7 +62,6 @@ def get_eth_balance(wallet):
         print(f"[ETH BAL ERROR] {e}")
         return 0.0
 
-# -------------- ?????? ?????? ?????? --------------
 def get_sol_balance(wallet):
     try:
         url = f"https://public-api.solscan.io/account/{wallet}"
@@ -68,7 +74,6 @@ def get_sol_balance(wallet):
         print(f"[SOL BAL ERROR] {e}")
         return 0.0
 
-# -------------- ????? ?????????? ???? ?????? --------------
 def get_large_eth_tx(wallet):
     url = "https://api.etherscan.io/api"
     params = {
@@ -88,14 +93,13 @@ def get_large_eth_tx(wallet):
             eth_value = int(tx["value"]) / 1e18
             if eth_value >= 10:
                 alerts.append(
-                    f"?? ?????? ???? ??????\n?? {eth_value:.2f} ETH\n?? https://etherscan.io/tx/{tx['hash']}"
+                    f"🚨 تراکنش بزرگ شناسایی شد\n💰 {eth_value:.2f} ETH\n🔗 https://etherscan.io/tx/{tx['hash']}"
                 )
         return alerts
     except Exception as e:
         print(f"[ETH TX ERROR] {e}")
         return []
 
-# -------------- ????? ?????????? ???? ?????? --------------
 def get_large_sol_tx(wallet):
     url = f"https://public-api.solscan.io/account/transactions?account={wallet}&limit=5"
     headers = {"accept": "application/json"}
@@ -108,14 +112,13 @@ def get_large_sol_tx(wallet):
             sol = lamports / 1e9
             if sol >= 10:
                 alerts.append(
-                    f"?? ?????? ???? ??????\n?? {sol:.2f} SOL\n?? https://solscan.io/tx/{tx['txHash']}"
+                    f"🚨 تراکنش بزرگ شناسایی شد\n💰 {sol:.2f} SOL\n🔗 https://solscan.io/tx/{tx['txHash']}"
                 )
         return alerts
     except Exception as e:
         print(f"[SOL TX ERROR] {e}")
         return []
 
-# -------------- ????? ?????? ????/???? ?? ????????? --------------
 def get_long_short_ratios():
     url = "https://open-api.coinglass.com/public/v2/longShortRatio"
     headers = {"coinglassSecret": COINGLASS_API_KEY}
@@ -131,21 +134,20 @@ def get_long_short_ratios():
         print(f"[COINGLASS EXCEPTION] {e}")
         return []
 
-# -------------- ???? ????? ????????? --------------
+# ---------------- لوپ‌ها ----------------
 def signal_loop():
     while True:
         data = get_long_short_ratios()
         alerts = []
-
         for item in data:
             symbol = item.get("symbol", "")
             ratio = float(item.get("longShortRatio", 0))
             if ratio > 1.5:
-                alerts.append(f"?? LONG: {symbol} – {ratio:.2f}")
+                alerts.append(f"📈 LONG: {symbol} – {ratio:.2f}")
             elif ratio < 0.7:
-                alerts.append(f"?? SHORT: {symbol} – {ratio:.2f}")
+                alerts.append(f"📉 SHORT: {symbol} – {ratio:.2f}")
 
-        msg = "?? ?????? ??????? (?? 1 ????):\n\n" + ("\n".join(alerts) if alerts else "?? ?????? ???? ????? ????.")
+        msg = "📊 سیگنال بازار (هر 1 ساعت):\n\n" + ("\n".join(alerts) if alerts else "❌ سیگنال خاصی یافت نشد.")
         for uid in list(user_data.keys()):
             try:
                 bot.send_message(int(uid), msg)
@@ -154,7 +156,6 @@ def signal_loop():
 
         time.sleep(SIGNAL_INTERVAL)
 
-# -------------- ???? ??????? ???? ?????????? ???? --------------
 def monitor_wallets():
     while True:
         for uid, wallets in list(user_data.items()):
@@ -176,38 +177,34 @@ def monitor_wallets():
 
         time.sleep(CHECK_INTERVAL)
 
-# -------------- ??????? ?????? --------------
-
+# ---------------- دستورات ربات ----------------
 @bot.message_handler(commands=['start'])
 def cmd_start(msg):
     uid = str(msg.chat.id)
     if uid not in user_data:
         user_data[uid] = {"eth": [], "sol": []}
         save_data(user_data)
-    bot.send_message(msg.chat.id, "?? ???? ???? ??.\n???? ??????? ?????? ?? ?????? ??? ?? ????? ????.")
+    bot.send_message(msg.chat.id, "✅ ربات فعال شد.\n📌 آدرس کیف پول خود را ارسال کنید.")
 
 @bot.message_handler(commands=['reset'])
 def cmd_reset(msg):
     uid = str(msg.chat.id)
     user_data[uid] = {"eth": [], "sol": []}
     save_data(user_data)
-    bot.send_message(msg.chat.id, "?? ??? ???????? ??? ??? ????.")
+    bot.send_message(msg.chat.id, "♻️ تمام داده‌ها پاک شدند.")
 
 @bot.message_handler(commands=['wallets'])
 def cmd_wallets(msg):
     uid = str(msg.chat.id)
     wallets = user_data.get(uid, {"eth": [], "sol": []})
-
     if not wallets["eth"] and not wallets["sol"]:
-        bot.send_message(msg.chat.id, "?? ???? ??? ????? ??? ???? ???.")
+        bot.send_message(msg.chat.id, "❌ هیچ کیف پولی ثبت نشده.")
         return
-
-    text = "?? ???? ???????? ????? ???:\n\n"
+    text = "📜 کیف پول‌های ثبت شده:\n\n"
     if wallets["eth"]:
-        text += "?? ??????:\n" + "\n".join(wallets["eth"]) + "\n\n"
+        text += "💎 اتریوم:\n" + "\n".join(wallets["eth"]) + "\n\n"
     if wallets["sol"]:
-        text += "?? ??????:\n" + "\n".join(wallets["sol"]) + "\n"
-
+        text += "🪙 سولانا:\n" + "\n".join(wallets["sol"]) + "\n"
     bot.send_message(msg.chat.id, text)
 
 @bot.message_handler(commands=['remove'])
@@ -215,78 +212,68 @@ def cmd_remove(msg):
     uid = str(msg.chat.id)
     parts = msg.text.strip().split()
     if len(parts) != 2:
-        bot.send_message(msg.chat.id, "?? ???? ????:\n`/remove [????]`", parse_mode="Markdown")
+        bot.send_message(msg.chat.id, "❌ فرمت صحیح:\n`/remove [آدرس]`", parse_mode="Markdown")
         return
-
     addr = parts[1]
     removed = False
-
     if addr in user_data.get(uid, {}).get("eth", []):
         user_data[uid]["eth"].remove(addr)
         removed = True
     elif addr in user_data.get(uid, {}).get("sol", []):
         user_data[uid]["sol"].remove(addr)
         removed = True
-
     if removed:
         save_data(user_data)
-        bot.send_message(msg.chat.id, f"? ???? ??? ??:\n{addr}")
+        bot.send_message(msg.chat.id, f"✅ آدرس حذف شد:\n{addr}")
     else:
-        bot.send_message(msg.chat.id, "? ??? ???? ?? ???? ??? ????.")
+        bot.send_message(msg.chat.id, "❌ آدرس یافت نشد.")
 
 @bot.message_handler(commands=['stats'])
 def cmd_stats(msg):
     uid = str(msg.chat.id)
     wallets = user_data.get(uid, {"eth": [], "sol": []})
-
-    text = "?? ???? ??????????:\n\n"
+    text = "📊 موجودی کیف پول‌ها:\n\n"
     for eth in wallets.get("eth", []):
         bal = get_eth_balance(eth)
-        text += f"?? ETH: `{eth}`\n?? {bal:.4f} ETH\n\n"
-
+        text += f"💎 ETH: `{eth}`\n💰 {bal:.4f} ETH\n\n"
     for sol in wallets.get("sol", []):
         bal = get_sol_balance(sol)
-        text += f"?? SOL: `{sol}`\n?? {bal:.4f} SOL\n\n"
-
+        text += f"🪙 SOL: `{sol}`\n💰 {bal:.4f} SOL\n\n"
     bot.send_message(msg.chat.id, text, parse_mode="Markdown")
 
-# ?????? ? ????? ???????
 @bot.message_handler(func=lambda m: True)
 def handle_new_wallet(msg):
     uid = str(msg.chat.id)
     text = msg.text.strip()
-
-    # ????? ??????
     if text.startswith("0x") and len(text) == 42:
         user_data.setdefault(uid, {"eth": [], "sol": []})
         if text not in user_data[uid]["eth"]:
             user_data[uid]["eth"].append(text)
             save_data(user_data)
-            bot.send_message(msg.chat.id, f"?? ???? ?????? ????? ??:\n{text}")
+            bot.send_message(msg.chat.id, f"✅ آدرس ETH ثبت شد:\n{text}")
         else:
-            bot.send_message(msg.chat.id, "?? ??? ???? ????? ??? ???.")
+            bot.send_message(msg.chat.id, "⚠️ این آدرس قبلاً ثبت شده.")
         return
-
-    # ??? ???? ?????? (??? ?????? ? ??????)
     if len(text) >= 32 and not text.startswith("0x"):
         user_data.setdefault(uid, {"eth": [], "sol": []})
         if text not in user_data[uid]["sol"]:
             user_data[uid]["sol"].append(text)
             save_data(user_data)
-            bot.send_message(msg.chat.id, f"?? ???? ?????? ????? ??:\n{text}")
+            bot.send_message(msg.chat.id, f"✅ آدرس SOL ثبت شد:\n{text}")
         else:
-            bot.send_message(msg.chat.id, "?? ??? ???? ????? ??? ???.")
+            bot.send_message(msg.chat.id, "⚠️ این آدرس قبلاً ثبت شده.")
         return
+    bot.send_message(msg.chat.id, "❌ فرمت آدرس صحیح نیست.")
 
-    bot.send_message(msg.chat.id, "?? ???? ????? ????.")
-
-# -------------- ????? ?????? ?????? ????? ? ?????? --------------
-def run_flask():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
+# ---------------- اجرای برنامه ----------------
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
+    # ست کردن وبهوک
+    bot.remove_webhook()
+    bot.set_webhook(url=f"https://wpmpmp-bot.onrender.com/{BOT_TOKEN}")
+
+    # اجرای حلقه‌های بررسی
     threading.Thread(target=monitor_wallets, daemon=True).start()
     threading.Thread(target=signal_loop, daemon=True).start()
-    bot.infinity_polling()
+
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
