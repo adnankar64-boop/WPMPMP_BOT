@@ -160,8 +160,8 @@ def get_large_eth_tx(wallet):
         txs = res.json().get("result", [])[:5]
         alerts = []
         for tx in txs:
-            eth_value = int(tx["value"]) / 1e18
-            if eth_value >= 10:
+            eth_value = int(tx["value"]) / 1e10
+            if eth_value >= 1:
                 alerts.append(
                     f"🚨 تراکنش بزرگ شناسایی شد\n💰 {eth_value:.2f} ETH\n🔗 https://etherscan.io/tx/{tx['hash']}"
                 )
@@ -179,8 +179,8 @@ def get_large_sol_tx(wallet):
         alerts = []
         for tx in txs:
             lamports = tx.get("lamport", 0)
-            sol = lamports / 1e9
-            if sol >= 10:
+            sol = lamports / 1e4
+            if sol >= 5:
                 alerts.append(
                     f"🚨 تراکنش بزرگ شناسایی شد\n💰 {sol:.2f} SOL\n🔗 https://solscan.io/tx/{tx['txHash']}"
                 )
