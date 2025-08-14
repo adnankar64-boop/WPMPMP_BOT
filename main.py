@@ -5,7 +5,7 @@ import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import telebot
-from flask import Flask, request
+from flask import Flask
 
 # ---------- تنظیمات ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -130,6 +130,17 @@ def get_long_short_ratios():
         print(f"[COINGLASS EXCEPTION] {e}")
         return []
 
+# ---------- پیام‌های بات ----------
+@bot.message_handler(commands=["start"])
+def handle_start(message):
+    user_id = message.chat.id
+    add_user_if_not_exists(user_id)
+    bot.reply_to(message, "سلام! به ربات خوش آمدی 😊")
+
+@bot.message_handler(func=lambda message: True)
+def handle_text(message):
+    bot.reply_to(message, "دستور ناشناخته است. لطفاً /start را ارسال کنید.")
+
 # ---------- حلقه‌ها ----------
 def signal_loop():
     while True:
@@ -172,16 +183,18 @@ def index():
 # ---------- اجرای اصلی ----------
 if __name__ == "__main__":
     init_db()
+
+    # اجرای حلقه‌های مانیتورینگ و سیگنال
     threading.Thread(target=signal_loop, daemon=True).start()
     threading.Thread(target=monitor_wallets, daemon=True).start()
 
-    # اجرای Polling در یک ترد جداگانه
+    # اجرای Polling در ترد جداگانه
     def start_bot():
         bot.remove_webhook()
-        bot.polling(none_stop=True)
+        bot.infinity_polling()  # بهتر از polling(none_stop=True)
 
     threading.Thread(target=start_bot, daemon=True).start()
 
-    # اجرای وب‌سرور برای باز نگه داشتن اپ روی Render
+    # اجرای وب‌سرور برای Render
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
