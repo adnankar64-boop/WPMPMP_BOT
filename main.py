@@ -135,7 +135,7 @@ def get_long_short_ratios():
 def handle_start(message):
     user_id = message.chat.id
     add_user_if_not_exists(user_id)
-    bot.reply_to(message, "سلام! به ربات خوش آمدی 😊\n\nبرای افزودن کیف پول:\n/addwallet eth 0x...\nیا فقط:\n/addwallet 0x...")
+    bot.reply_to(message, "سلام! به ربات خوش آمدی 😊\n\nبرای افزودن کیف پول:\n/addwallet eth 0x...\nیا فقط:\n/addwallet 0x...\n\nبرای حذف کیف پول:\n/removewallet 0x...\n\nبرای دیدن کیف پول‌ها:\n/mywallets")
 
 @bot.message_handler(commands=["addwallet"])
 def handle_add_wallet(message):
@@ -187,6 +187,34 @@ def handle_add_wallet(message):
         print(f"[ADD WALLET ERROR] {e}")
         bot.reply_to(message, "❌ خطا در افزودن کیف پول.")
 
+@bot.message_handler(commands=["removewallet"])
+def handle_remove_wallet(message):
+    try:
+        user_id = message.chat.id
+        parts = message.text.strip().split()
+        
+        if len(parts) == 2:
+            wallet_address = parts[1]
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM wallets WHERE user_id = %s AND wallet_address = %s;",
+                (user_id, wallet_address)
+            )
+            deleted = cur.rowcount
+            conn.commit()
+            conn.close()
+
+            if deleted:
+                bot.reply_to(message, f"✅ کیف پول حذف شد:\n{wallet_address}")
+            else:
+                bot.reply_to(message, "❌ این کیف پول برای شما ثبت نشده است.")
+        else:
+            bot.reply_to(message, "❌ فرمت دستور اشتباه است.\nنمونه:\n/removewallet 0x...")
+    except Exception as e:
+        print(f"[REMOVE WALLET ERROR] {e}")
+        bot.reply_to(message, "❌ خطا در حذف کیف پول.")
+
 @bot.message_handler(commands=["mywallets"])
 def handle_my_wallets(message):
     user_id = message.chat.id
@@ -226,17 +254,19 @@ def signal_loop():
                 bot.send_message(int(uid), msg)
             except Exception as e:
                 print(f"[Telegram send error to {uid}]: {e}")
+        
+        time.sleep(SIGNAL_INTERVAL)
 
-        time.sleep(SIGNAL_INTERVAL)  # این خط برای فاصله زمانی بین ارسال‌ها
+# ---------- اجرای بات و حلقه‌ها ----------
+def start_bot():
+    bot.infinity_polling()
+
+def start_signal_thread():
+    thread = threading.Thread(target=signal_loop)
+    thread.daemon = True
+    thread.start()
 
 if __name__ == "__main__":
-    init_db()  # ساخت جداول دیتابیس در صورت نیاز
-
-    # اجرای ربات تلگرام در یک Thread جدا
-    threading.Thread(target=bot.polling, kwargs={"none_stop": True}).start()
-
-    # اجرای حلقه ارسال سیگنال‌ها در Thread جدا
-    threading.Thread(target=signal_loop).start()
-
-    # اجرای Flask در صورت نیاز به وب‌هوک یا سرویس مانیتورینگ
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    init_db()
+    start_signal_thread()
+    start_bot()
