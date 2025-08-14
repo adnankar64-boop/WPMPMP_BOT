@@ -8,11 +8,10 @@ import telebot
 from flask import Flask, request
 
 # ---------- تنظیمات ----------
-BOT_TOKEN = "7762972292:AAEkDx853saWRuDpo59TwN_Wa0uW1mY-AIo"
-DATABASE_URL = DATABASE_UR ="postgresql://wallet_wpmpmp_user:j9LnormdUlaiWsf36sMTmM79nMXeITRm@dpg-d2dqf0ripnbc739eva90-a/wallet_wpmpmp"
-
-ETHERSCAN_API_KEY = "VZFDUWB3YGQ1YCDKTCU1D6DDSS"
-COINGLASS_API_KEY = "7e13609fdaab455c91f77634b271ae1e"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY")
+COINGLASS_API_KEY = os.environ.get("COINGLASS_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -88,7 +87,7 @@ def get_large_eth_tx(wallet):
         txs = res.json().get("result", [])[:5]
         alerts = []
         for tx in txs:
-            eth_value = int(tx["value"]) / 1e18  # تبدیل دقیق Wei به ETH
+            eth_value = int(tx["value"]) / 1e18
             if eth_value >= 1:
                 alerts.append(
                     f"🚨 تراکنش بزرگ شناسایی شد\n💰 {eth_value:.2f} ETH\n🔗 https://etherscan.io/tx/{tx['hash']}"
@@ -107,7 +106,7 @@ def get_large_sol_tx(wallet):
         alerts = []
         for tx in txs:
             lamports = tx.get("lamport", 0)
-            sol = lamports / 1e9  # تبدیل دقیق lamports به SOL
+            sol = lamports / 1e9
             if sol >= 5:
                 alerts.append(
                     f"🚨 تراکنش بزرگ شناسایی شد\n💰 {sol:.2f} SOL\n🔗 https://solscan.io/tx/{tx['txHash']}"
@@ -122,7 +121,6 @@ def get_long_short_ratios():
     headers = {"coinglassSecret": COINGLASS_API_KEY}
     try:
         res = requests.get(url, headers=headers, timeout=15)
-        print("[Coinglass raw response]", res.text)  # برای دیباگ
         data = res.json()
         if not data.get("success"):
             print(f"[COINGLASS ERROR] {data.get('message')}")
@@ -166,13 +164,24 @@ def monitor_wallets():
                     bot.send_message(int(uid), alert)
         time.sleep(CHECK_INTERVAL)
 
+# ---------- Route برای Render ----------
+@app.route('/')
+def index():
+    return "ربات در حال اجراست ✅"
+
 # ---------- اجرای اصلی ----------
 if __name__ == "__main__":
     init_db()
     threading.Thread(target=signal_loop, daemon=True).start()
     threading.Thread(target=monitor_wallets, daemon=True).start()
-    print("Bot started. Waiting for events...")
 
-    bot.remove_webhook()  # ✅ این خط برای حذف Webhook ضروریه
-    bot.polling(none_stop=True)  # ✅ شروع Polling
+    # اجرای Polling در یک ترد جداگانه
+    def start_bot():
+        bot.remove_webhook()
+        bot.polling(none_stop=True)
 
+    threading.Thread(target=start_bot, daemon=True).start()
+
+    # اجرای وب‌سرور برای باز نگه داشتن اپ روی Render
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
