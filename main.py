@@ -9,9 +9,8 @@ from flask import Flask, request
 
 # ---------- تنظیمات ----------
 BOT_TOKEN = "7762972292:AAEkDx853saWRuDpo59TwN_Wa0uW1mY-AIo"
-DATABASE_URL = "postgresql://wallet_wpmpmp_user:j9LnormdUlaiWsf36sMTmM79nMXeITRm@dpg-
+DATABASE_URL = DATABASE_UR ="postgresql://wallet_wpmpmp_user:j9LnormdUlaiWsf36sMTmM79nMXeITRm@dpg-d2dqf0ripnbc739eva90-a/wallet_wpmpmp"
 
-d2dqf0ripnbc739eva90-a/wallet_wpmpmp"
 ETHERSCAN_API_KEY = "VZFDUWB3YGQ1YCDKTCU1D6DDSS"
 COINGLASS_API_KEY = "7e13609fdaab455c91f77634b271ae1e"
 
