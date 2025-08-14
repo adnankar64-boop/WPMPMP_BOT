@@ -172,4 +172,7 @@ if __name__ == "__main__":
     threading.Thread(target=signal_loop, daemon=True).start()
     threading.Thread(target=monitor_wallets, daemon=True).start()
     print("Bot started. Waiting for events...")
-    bot.polling(none_stop=True)
+
+    bot.remove_webhook()  # ✅ این خط برای حذف Webhook ضروریه
+    bot.polling(none_stop=True)  # ✅ شروع Polling
+
