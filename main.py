@@ -135,7 +135,7 @@ def get_long_short_ratios():
 def handle_start(message):
     user_id = message.chat.id
     add_user_if_not_exists(user_id)
-    bot.reply_to(message, "سلام! به ربات خوش آمدی 😊\n\nبرای افزودن کیف پول از دستور زیر استفاده کن:\n/addwallet eth 0x1234...")
+    bot.reply_to(message, "سلام! به ربات خوش آمدی 😊\n\nبرای افزودن کیف پول:\n/addwallet eth 0x...\nیا فقط:\n/addwallet 0x...")
 
 @bot.message_handler(commands=["addwallet"])
 def handle_add_wallet(message):
@@ -143,16 +143,34 @@ def handle_add_wallet(message):
         user_id = message.chat.id
         add_user_if_not_exists(user_id)
 
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "فرمت دستور اشتباه است. به صورت زیر وارد کن:\n/addwallet eth 0x1234...")
+        parts = message.text.strip().split()
+        
+        if len(parts) == 2:
+            # فقط آدرس آمده، نوع را تشخیص بده
+            wallet_address = parts[1]
+            if wallet_address.startswith("0x") and len(wallet_address) == 42:
+                coin_type = "eth"
+            elif len(wallet_address) >= 32:
+                coin_type = "sol"
+            else:
+                bot.reply_to(message, "❌ نمی‌توان نوع کیف پول را تشخیص داد. لطفاً به این صورت وارد کن:\n/addwallet eth 0x...\nیا\n/addwallet sol G123...")
+                return
+        elif len(parts) == 3:
+            coin_type = parts[1].lower()
+            wallet_address = parts[2]
+            if coin_type not in ["eth", "sol"]:
+                bot.reply_to(message, "❌ نوع کیف پول فقط می‌تواند 'eth' یا 'sol' باشد.")
+                return
+        else:
+            bot.reply_to(message, "❌ فرمت دستور اشتباه است.\nنمونه:\n/addwallet eth 0x...\nیا\n/addwallet 0x...")
             return
 
-        coin_type = parts[1].lower()
-        wallet_address = parts[2]
-
-        if coin_type not in ["eth", "sol"]:
-            bot.reply_to(message, "نوع کیف پول باید فقط 'eth' یا 'sol' باشد.")
+        # بررسی ساده صحت آدرس
+        if coin_type == "eth" and not wallet_address.startswith("0x"):
+            bot.reply_to(message, "❌ آدرس ETH باید با 0x شروع شود.")
+            return
+        if coin_type == "sol" and len(wallet_address) < 20:
+            bot.reply_to(message, "❌ آدرس SOL معتبر نیست.")
             return
 
         conn = get_connection()
@@ -164,7 +182,7 @@ def handle_add_wallet(message):
         conn.commit()
         conn.close()
 
-        bot.reply_to(message, f"✅ کیف پول {wallet_address} ({coin_type.upper()}) با موفقیت ذخیره شد.")
+        bot.reply_to(message, f"✅ کیف پول ثبت شد:\n{wallet_address} ({coin_type.upper()})")
     except Exception as e:
         print(f"[ADD WALLET ERROR] {e}")
         bot.reply_to(message, "❌ خطا در افزودن کیف پول.")
@@ -187,7 +205,7 @@ def handle_my_wallets(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_unknown(message):
-    bot.reply_to(message, "دستور ناشناخته است. برای شروع /start را ارسال کنید.")
+    bot.reply_to(message, "❓ دستور ناشناخته است. لطفاً از /start شروع کن.")
 
 # ---------- حلقه‌ها ----------
 def signal_loop():
@@ -202,43 +220,9 @@ def signal_loop():
             elif ratio < 0.7:
                 alerts.append(f"📉 SHORT: {symbol} – {ratio:.2f}")
 
-        msg = "📊 سیگنال بازار:\n\n" + ("\n".join(alerts) if alerts else "❌ سیگنال خاصی یافت نشد.")
+        msg = "📊 سیگنال بازار:\n\n" + ("\n".join(alerts) if alerts else "❌ سیگنالی یافت نشد.")
         for uid in get_all_users():
             try:
                 bot.send_message(int(uid), msg)
             except Exception as e:
                 print(f"[Telegram send error to {uid}]: {e}")
-        time.sleep(SIGNAL_INTERVAL)
-
-def monitor_wallets():
-    while True:
-        for uid in get_all_users():
-            wallets = get_user_wallets(uid)
-            for eth in wallets.get("eth", []):
-                for alert in get_large_eth_tx(eth):
-                    bot.send_message(int(uid), alert)
-            for sol in wallets.get("sol", []):
-                for alert in get_large_sol_tx(sol):
-                    bot.send_message(int(uid), alert)
-        time.sleep(CHECK_INTERVAL)
-
-# ---------- Route برای Render ----------
-@app.route('/')
-def index():
-    return "ربات در حال اجراست ✅"
-
-# ---------- اجرای اصلی ----------
-if __name__ == "__main__":
-    init_db()
-
-    threading.Thread(target=signal_loop, daemon=True).start()
-    threading.Thread(target=monitor_wallets, daemon=True).start()
-
-    def start_bot():
-        bot.remove_webhook()
-        bot.infinity_polling()
-
-    threading.Thread(target=start_bot, daemon=True).start()
-
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
