@@ -226,14 +226,17 @@ def signal_loop():
                 bot.send_message(int(uid), msg)
             except Exception as e:
                 print(f"[Telegram send error to {uid}]: {e}")
-if __name__ == "__main__":
-    init_db()  # ایجاد جداول در صورت نیاز
 
-    # اجرای ربات در یک Thread جدا
+        time.sleep(SIGNAL_INTERVAL)  # این خط برای فاصله زمانی بین ارسال‌ها
+
+if __name__ == "__main__":
+    init_db()  # ساخت جداول دیتابیس در صورت نیاز
+
+    # اجرای ربات تلگرام در یک Thread جدا
     threading.Thread(target=bot.polling, kwargs={"none_stop": True}).start()
 
-    # اجرای سیگنال‌ها در یک Thread جدا
+    # اجرای حلقه ارسال سیگنال‌ها در Thread جدا
     threading.Thread(target=signal_loop).start()
 
-    # اجرای اپ Flask فقط در صورت نیاز به وب‌هوک یا بررسی سلامت
+    # اجرای Flask در صورت نیاز به وب‌هوک یا سرویس مانیتورینگ
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
