@@ -135,11 +135,59 @@ def get_long_short_ratios():
 def handle_start(message):
     user_id = message.chat.id
     add_user_if_not_exists(user_id)
-    bot.reply_to(message, "سلام! به ربات خوش آمدی 😊")
+    bot.reply_to(message, "سلام! به ربات خوش آمدی 😊\n\nبرای افزودن کیف پول از دستور زیر استفاده کن:\n/addwallet eth 0x1234...")
+
+@bot.message_handler(commands=["addwallet"])
+def handle_add_wallet(message):
+    try:
+        user_id = message.chat.id
+        add_user_if_not_exists(user_id)
+
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "فرمت دستور اشتباه است. به صورت زیر وارد کن:\n/addwallet eth 0x1234...")
+            return
+
+        coin_type = parts[1].lower()
+        wallet_address = parts[2]
+
+        if coin_type not in ["eth", "sol"]:
+            bot.reply_to(message, "نوع کیف پول باید فقط 'eth' یا 'sol' باشد.")
+            return
+
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO wallets (user_id, wallet_address, coin_type) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING;",
+            (user_id, wallet_address, coin_type)
+        )
+        conn.commit()
+        conn.close()
+
+        bot.reply_to(message, f"✅ کیف پول {wallet_address} ({coin_type.upper()}) با موفقیت ذخیره شد.")
+    except Exception as e:
+        print(f"[ADD WALLET ERROR] {e}")
+        bot.reply_to(message, "❌ خطا در افزودن کیف پول.")
+
+@bot.message_handler(commands=["mywallets"])
+def handle_my_wallets(message):
+    user_id = message.chat.id
+    wallets = get_user_wallets(user_id)
+    if not wallets["eth"] and not wallets["sol"]:
+        bot.reply_to(message, "شما هنوز هیچ کیف پولی ثبت نکرده‌اید.")
+        return
+
+    msg = "💼 کیف پول‌های ثبت‌شده:\n"
+    if wallets["eth"]:
+        msg += "\n🔷 ETH:\n" + "\n".join(wallets["eth"])
+    if wallets["sol"]:
+        msg += "\n🟡 SOL:\n" + "\n".join(wallets["sol"])
+
+    bot.reply_to(message, msg)
 
 @bot.message_handler(func=lambda message: True)
-def handle_text(message):
-    bot.reply_to(message, "دستور ناشناخته است. لطفاً /start را ارسال کنید.")
+def handle_unknown(message):
+    bot.reply_to(message, "دستور ناشناخته است. برای شروع /start را ارسال کنید.")
 
 # ---------- حلقه‌ها ----------
 def signal_loop():
@@ -160,7 +208,6 @@ def signal_loop():
                 bot.send_message(int(uid), msg)
             except Exception as e:
                 print(f"[Telegram send error to {uid}]: {e}")
-
         time.sleep(SIGNAL_INTERVAL)
 
 def monitor_wallets():
@@ -184,17 +231,13 @@ def index():
 if __name__ == "__main__":
     init_db()
 
-    # اجرای حلقه‌های مانیتورینگ و سیگنال
     threading.Thread(target=signal_loop, daemon=True).start()
     threading.Thread(target=monitor_wallets, daemon=True).start()
 
-    # اجرای Polling در ترد جداگانه
     def start_bot():
         bot.remove_webhook()
-        bot.infinity_polling()  # بهتر از polling(none_stop=True)
+        bot.infinity_polling()
 
     threading.Thread(target=start_bot, daemon=True).start()
 
-    # اجرای وب‌سرور برای Render
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 
