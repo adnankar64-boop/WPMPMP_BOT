@@ -238,8 +238,10 @@ def handle_unknown(message):
 # ---------- حلقه‌ها ----------
 def signal_loop():
     while True:
-        data = get_long_short_ratios()
         alerts = []
+
+        # گرفتن داده‌های لانگ/شورت از Coinglass
+        data = get_long_short_ratios()
         for item in data:
             symbol = item.get("symbol", "")
             ratio = float(item.get("longShortRatio", 0))
@@ -248,13 +250,28 @@ def signal_loop():
             elif ratio < 0.7:
                 alerts.append(f"📉 SHORT: {symbol} – {ratio:.2f}")
 
+        # بررسی تراکنش‌های بزرگ در کیف پول‌ها
+        for uid in get_all_users():
+            wallets = get_user_wallets(uid)
+
+            # بررسی ETH ولت‌ها
+            for eth_wallet in wallets["eth"]:
+                eth_alerts = get_large_eth_tx(eth_wallet)
+                alerts.extend(eth_alerts)
+
+            # بررسی SOL ولت‌ها
+            for sol_wallet in wallets["sol"]:
+                sol_alerts = get_large_sol_tx(sol_wallet)
+                alerts.extend(sol_alerts)
+
+        # فرستادن پیام به کاربران
         msg = "📊 سیگنال بازار:\n\n" + ("\n".join(alerts) if alerts else "❌ سیگنالی یافت نشد.")
         for uid in get_all_users():
             try:
                 bot.send_message(int(uid), msg)
             except Exception as e:
                 print(f"[Telegram send error to {uid}]: {e}")
-        
+
         time.sleep(SIGNAL_INTERVAL)
 
 # ---------- اجرای بات و حلقه‌ها ----------
