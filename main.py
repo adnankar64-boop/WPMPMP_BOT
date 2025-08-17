@@ -5,7 +5,6 @@ import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import telebot
-from flask import Flask
 
 # ---------- تنظیمات ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -14,7 +13,6 @@ ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY")
 COINGLASS_API_KEY = os.environ.get("COINGLASS_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)
 
 CHECK_INTERVAL = 600    # هر 10 دقیقه
 SIGNAL_INTERVAL = 3600  # هر 1 ساعت
@@ -122,6 +120,7 @@ def get_long_short_ratios():
     try:
         res = requests.get(url, headers=headers, timeout=15)
         data = res.json()
+        print("[DEBUG] Coinglass response:", data)  # <-- لاگ اضافه‌شده
         if not data.get("success"):
             print(f"[COINGLASS ERROR] {data.get('message')}")
             return []
@@ -142,32 +141,29 @@ def handle_add_wallet(message):
     try:
         user_id = message.chat.id
         add_user_if_not_exists(user_id)
-
         parts = message.text.strip().split()
-        
+
         if len(parts) == 2:
-            # فقط آدرس آمده، نوع را تشخیص بده
             wallet_address = parts[1]
             if wallet_address.startswith("0x") and len(wallet_address) == 42:
                 coin_type = "eth"
             elif len(wallet_address) >= 32:
                 coin_type = "sol"
             else:
-                bot.reply_to(message, "❌ نمی‌توان نوع کیف پول را تشخیص داد. لطفاً به این صورت وارد کن:\n/addwallet eth 0x...\nیا\n/addwallet sol G123...")
+                bot.reply_to(message, "❌ نوع کیف پول مشخص نیست.")
                 return
         elif len(parts) == 3:
             coin_type = parts[1].lower()
             wallet_address = parts[2]
             if coin_type not in ["eth", "sol"]:
-                bot.reply_to(message, "❌ نوع کیف پول فقط می‌تواند 'eth' یا 'sol' باشد.")
+                bot.reply_to(message, "❌ نوع کیف پول فقط می‌تواند eth یا sol باشد.")
                 return
         else:
-            bot.reply_to(message, "❌ فرمت دستور اشتباه است.\nنمونه:\n/addwallet eth 0x...\nیا\n/addwallet 0x...")
+            bot.reply_to(message, "❌ فرمت اشتباه.")
             return
 
-        # بررسی ساده صحت آدرس
         if coin_type == "eth" and not wallet_address.startswith("0x"):
-            bot.reply_to(message, "❌ آدرس ETH باید با 0x شروع شود.")
+            bot.reply_to(message, "❌ آدرس ETH اشتباه است.")
             return
         if coin_type == "sol" and len(wallet_address) < 20:
             bot.reply_to(message, "❌ آدرس SOL معتبر نیست.")
@@ -192,15 +188,11 @@ def handle_remove_wallet(message):
     try:
         user_id = message.chat.id
         parts = message.text.strip().split()
-        
         if len(parts) == 2:
             wallet_address = parts[1]
             conn = get_connection()
             cur = conn.cursor()
-            cur.execute(
-                "DELETE FROM wallets WHERE user_id = %s AND wallet_address = %s;",
-                (user_id, wallet_address)
-            )
+            cur.execute("DELETE FROM wallets WHERE user_id = %s AND wallet_address = %s;", (user_id, wallet_address))
             deleted = cur.rowcount
             conn.commit()
             conn.close()
@@ -210,7 +202,7 @@ def handle_remove_wallet(message):
             else:
                 bot.reply_to(message, "❌ این کیف پول برای شما ثبت نشده است.")
         else:
-            bot.reply_to(message, "❌ فرمت دستور اشتباه است.\nنمونه:\n/removewallet 0x...")
+            bot.reply_to(message, "❌ فرمت اشتباه.")
     except Exception as e:
         print(f"[REMOVE WALLET ERROR] {e}")
         bot.reply_to(message, "❌ خطا در حذف کیف پول.")
@@ -233,14 +225,14 @@ def handle_my_wallets(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_unknown(message):
-    bot.reply_to(message, "❓ دستور ناشناخته است. لطفاً از /start شروع کن.")
+    bot.reply_to(message, "❓ دستور ناشناخته است.")
 
-# ---------- حلقه‌ها ----------
+# ---------- حلقه سیگنال ----------
 def signal_loop():
+    print("[LOOP] signal_loop started")
     while True:
         alerts = []
 
-        # گرفتن داده‌های لانگ/شورت از Coinglass
         data = get_long_short_ratios()
         for item in data:
             symbol = item.get("symbol", "")
@@ -250,21 +242,19 @@ def signal_loop():
             elif ratio < 0.7:
                 alerts.append(f"📉 SHORT: {symbol} – {ratio:.2f}")
 
-        # بررسی تراکنش‌های بزرگ در کیف پول‌ها
         for uid in get_all_users():
+            print(f"[LOOP] Checking wallets for user {uid}")
             wallets = get_user_wallets(uid)
 
-            # بررسی ETH ولت‌ها
             for eth_wallet in wallets["eth"]:
                 eth_alerts = get_large_eth_tx(eth_wallet)
                 alerts.extend(eth_alerts)
 
-            # بررسی SOL ولت‌ها
             for sol_wallet in wallets["sol"]:
                 sol_alerts = get_large_sol_tx(sol_wallet)
                 alerts.extend(sol_alerts)
 
-        # فرستادن پیام به کاربران
+        print(f"[LOOP] Sending {len(alerts)} alerts")
         msg = "📊 سیگنال بازار:\n\n" + ("\n".join(alerts) if alerts else "❌ سیگنالی یافت نشد.")
         for uid in get_all_users():
             try:
@@ -274,7 +264,7 @@ def signal_loop():
 
         time.sleep(SIGNAL_INTERVAL)
 
-# ---------- اجرای بات و حلقه‌ها ----------
+# ---------- اجرای بات و حلقه ----------
 def start_bot():
     bot.infinity_polling()
 
