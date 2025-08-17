@@ -3,7 +3,7 @@ services:
     name: whale_signal_bot
     envVars:
       - key: BOT_TOKEN
-        value: "توکن ربات تلگرام اینجا"
+        value: "توکن ربات تلگرام"
       - key: DATABASE_URL
         value: "آدرس دیتابیس"
       - key: ETHERSCAN_API_KEY
@@ -11,3 +11,5 @@ services:
       - key: COINGLASS_API_KEY
         value: "کلید کوین گلاس"
     plan: free
+    runtime: python
+    startCommand: python main.py
