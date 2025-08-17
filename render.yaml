@@ -1,17 +1,13 @@
 services:
-  - type: worker
+  - type: web
     name: whale_signal_bot
-    env: python
-    plan: free
-    region: oregon
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python main.py"
     envVars:
       - key: BOT_TOKEN
-        sync: false
+        value: "توکن ربات تلگرام اینجا"
       - key: DATABASE_URL
-        sync: false
+        value: "آدرس دیتابیس"
       - key: ETHERSCAN_API_KEY
-        sync: false
+        value: "کلید اتر اسکن"
       - key: COINGLASS_API_KEY
-        sync: false
+        value: "کلید کوین گلاس"
+    plan: free
