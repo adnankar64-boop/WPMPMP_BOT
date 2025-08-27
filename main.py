@@ -5,6 +5,7 @@ import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import telebot
+from flask import Flask, request
 
 # ---------- تنظیمات ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -13,6 +14,7 @@ ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY")
 COINGLASS_API_KEY = os.environ.get("COINGLASS_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
 CHECK_INTERVAL = 600    # هر 10 دقیقه
 SIGNAL_INTERVAL = 3600  # هر 1 ساعت
@@ -120,7 +122,7 @@ def get_long_short_ratios():
     try:
         res = requests.get(url, headers=headers, timeout=15)
         data = res.json()
-        print("[DEBUG] Coinglass response:", data)  # <-- لاگ اضافه‌شده
+        print("[DEBUG] Coinglass response:", data)
         if not data.get("success"):
             print(f"[COINGLASS ERROR] {data.get('message')}")
             return []
@@ -264,16 +266,21 @@ def signal_loop():
 
         time.sleep(SIGNAL_INTERVAL)
 
-# ---------- اجرای بات و حلقه ----------
-def start_bot():
-    bot.infinity_polling()
+# ---------- وبهوک ----------
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def getMessage():
+    json_str = request.get_data().decode('UTF-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "ok", 200
 
-def start_signal_thread():
-    thread = threading.Thread(target=signal_loop)
-    thread.daemon = True
-    thread.start()
+@app.route("/")
+def index():
+    return "Bot is running!", 200
 
+# ---------- اجرای برنامه ----------
 if __name__ == "__main__":
     init_db()
     start_signal_thread()
-    start_bot()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
