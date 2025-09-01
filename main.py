@@ -6,6 +6,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import telebot
 from flask import Flask, request
+from datetime import datetime, timedelta
 
 # ---------- تنظیمات ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -16,7 +17,8 @@ COINGLASS_API_KEY = os.environ.get("COINGLASS_API_KEY")
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-SIGNAL_INTERVAL = 3600  # ارسال سیگنال هر 1 ساعت
+SIGNAL_INTERVAL = 3600  # هر 1 ساعت
+SIGNAL_EXPIRY_HOURS = 24  # سیگنال‌ها بعد از 24 ساعت پاک شوند
 
 # ---------- دیتابیس ----------
 def get_connection():
@@ -131,12 +133,19 @@ def get_long_short_ratios():
         return []
 
 # ---------- حلقه سیگنال بهینه ----------
-last_sent_signals = set()
+last_sent_signals = {}  # {"alert_text": datetime_of_sending}
+
+def clean_expired_signals():
+    now = datetime.utcnow()
+    expired = [k for k, v in last_sent_signals.items() if now - v > timedelta(hours=SIGNAL_EXPIRY_HOURS)]
+    for k in expired:
+        del last_sent_signals[k]
 
 def signal_loop():
     global last_sent_signals
     print("[LOOP] signal_loop started")
     while True:
+        clean_expired_signals()
         alerts = []
 
         # ---------- Coinglass ----------
@@ -144,15 +153,14 @@ def signal_loop():
         for item in data:
             symbol = item.get("symbol", "")
             ratio = float(item.get("longShortRatio", 0))
+            alert = None
             if ratio > 1.5:
                 alert = f"📈 LONG: {symbol} – {ratio:.2f}"
             elif ratio < 0.7:
                 alert = f"📉 SHORT: {symbol} – {ratio:.2f}"
-            else:
-                continue
-            if alert not in last_sent_signals:
+            if alert and alert not in last_sent_signals:
                 alerts.append(alert)
-                last_sent_signals.add(alert)
+                last_sent_signals[alert] = datetime.utcnow()
 
         # ---------- Wallet Transactions ----------
         for uid in get_users_with_wallets():
@@ -161,12 +169,12 @@ def signal_loop():
                 for alert in get_large_eth_tx(eth_wallet):
                     if alert not in last_sent_signals:
                         alerts.append(alert)
-                        last_sent_signals.add(alert)
+                        last_sent_signals[alert] = datetime.utcnow()
             for sol_wallet in wallets["sol"]:
                 for alert in get_large_sol_tx(sol_wallet):
                     if alert not in last_sent_signals:
                         alerts.append(alert)
-                        last_sent_signals.add(alert)
+                        last_sent_signals[alert] = datetime.utcnow()
 
         # ---------- ارسال پیام ----------
         if alerts:
@@ -202,10 +210,13 @@ def index():
 if __name__ == "__main__":
     init_db()
     start_signal_thread()
+    
+    # پیام آزمایشی اولیه به همه کاربران دارای کیف پول
     for uid in get_users_with_wallets():
         try:
-            bot.send_message(chat_id=int(uid), text="✅ Bot restarted successfully and is live on Render!")
-        except:
-            pass
+            bot.send_message(chat_id=int(uid), text="🟢 پیام آزمایشی: ربات در حال کار است!")
+        except Exception as e:
+            print(f"[Test message error to {uid}]: {e}")
+
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
