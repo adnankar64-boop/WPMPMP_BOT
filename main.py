@@ -348,11 +348,18 @@ def ensure_webhook():
 
 # ---------- اجرای برنامه ----------
 if __name__ == "__main__":
-    init_db()
-    start_signal_thread()   # ✅ مشکل NameError حل شد
-    ensure_webhook()        # ✅ وبهوک خودکار (در Render با RENDER_EXTERNAL_URL)
-    port = int(os.environ.get("PORT", 5000))
-    # debug=False برای پایداری در Render
-    bot.send_message(160584976 "✅ Bot restarted successfully and is live on Render!")
+    import threading
 
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # اجرای لوپ سیگنال‌ها در یک ترد جداگانه
+    signal_thread = threading.Thread(target=signal_loop, daemon=True)
+    signal_thread.start()
+    print("[THREAD] signal_loop thread started")
+
+    # اطلاع‌رسانی شروع شدن ربات
+    try:
+        bot.send_message(chat_id=160584976, text="✅ Bot restarted successfully and is live on Render!")
+    except Exception as e:
+        print(f"[ERROR] Could not send startup message: {e}")
+
+    # اجرای Flask
+    app.run(host="0.0.0.0", port=10000)
