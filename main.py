@@ -353,4 +353,6 @@ if __name__ == "__main__":
     ensure_webhook()        # ✅ وبهوک خودکار (در Render با RENDER_EXTERNAL_URL)
     port = int(os.environ.get("PORT", 5000))
     # debug=False برای پایداری در Render
+    bot.send_message(7762972292:AAH-_CBovYrrB7LcRn5GFQMrKEFKVleP768 "✅ Bot restarted successfully and is live on Render!")
+
     app.run(host="0.0.0.0", port=port, debug=False)
