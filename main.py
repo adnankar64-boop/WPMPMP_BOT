@@ -13,10 +13,24 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY")
 COINGLASS_API_KEY = os.environ.get("COINGLASS_API_KEY")
 
-bot = telebot.TeleBot(BOT_TOKEN)
+# آدرس وبهوک:
+# 1) اگر خودت WEBHOOK_URL را ست کنی، همان استفاده می‌شود.
+# 2) در غیر این صورت، اگر RENDER_EXTERNAL_URL موجود باشد از آن + /<BOT_TOKEN> ساخته می‌شود.
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+if not WEBHOOK_URL:
+    _render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if _render_url and BOT_TOKEN:
+        WEBHOOK_URL = _render_url.rstrip("/") + "/" + BOT_TOKEN
+
+if not BOT_TOKEN:
+    raise RuntimeError("Environment variable BOT_TOKEN تنظیم نشده است.")
+if not DATABASE_URL:
+    raise RuntimeError("Environment variable DATABASE_URL تنظیم نشده است.")
+
+bot = telebot.TeleBot(BOT_TOKEN)  # می‌تونی parse_mode="HTML" هم بدی در صورت نیاز
 app = Flask(__name__)
 
-CHECK_INTERVAL = 600    # هر 10 دقیقه
+CHECK_INTERVAL = 600    # هر 10 دقیقه (فعلاً استفاده نشده؛ برای توسعه‌های بعدی)
 SIGNAL_INTERVAL = 3600  # هر 1 ساعت
 
 # ---------- دیتابیس ----------
@@ -43,6 +57,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+    print("[DB] Tables ensured.")
 
 def add_user_if_not_exists(user_id):
     conn = get_connection()
@@ -84,13 +99,18 @@ def get_large_eth_tx(wallet):
     }
     try:
         res = requests.get(url, params=params, timeout=15)
-        txs = res.json().get("result", [])[:5]
+        data = res.json()
+        txs = data.get("result", [])[:5] if isinstance(data, dict) else []
         alerts = []
         for tx in txs:
-            eth_value = int(tx["value"]) / 1e18
+            # بعضی وقت‌ها value رشته‌ای خیلی بزرگه
+            try:
+                eth_value = int(tx.get("value", "0")) / 1e18
+            except Exception:
+                eth_value = 0.0
             if eth_value >= 1:
                 alerts.append(
-                    f"🚨 تراکنش بزرگ شناسایی شد\n💰 {eth_value:.2f} ETH\n🔗 https://etherscan.io/tx/{tx['hash']}"
+                    f"🚨 تراکنش بزرگ شناسایی شد\n💰 {eth_value:.2f} ETH\n🔗 https://etherscan.io/tx/{tx.get('hash')}"
                 )
         return alerts
     except Exception as e:
@@ -103,13 +123,15 @@ def get_large_sol_tx(wallet):
     try:
         res = requests.get(url, headers=headers, timeout=15)
         txs = res.json()
+        if not isinstance(txs, list):
+            return []
         alerts = []
         for tx in txs:
-            lamports = tx.get("lamport", 0)
+            lamports = tx.get("lamport", 0) or 0
             sol = lamports / 1e9
             if sol >= 5:
                 alerts.append(
-                    f"🚨 تراکنش بزرگ شناسایی شد\n💰 {sol:.2f} SOL\n🔗 https://solscan.io/tx/{tx['txHash']}"
+                    f"🚨 تراکنش بزرگ شناسایی شد\n💰 {sol:.2f} SOL\n🔗 https://solscan.io/tx/{tx.get('txHash')}"
                 )
         return alerts
     except Exception as e:
@@ -118,15 +140,19 @@ def get_large_sol_tx(wallet):
 
 def get_long_short_ratios():
     url = "https://open-api.coinglass.com/public/v2/longShortRatio"
-    headers = {"coinglassSecret": COINGLASS_API_KEY}
+    headers = {"coinglassSecret": COINGLASS_API_KEY or ""}
     try:
         res = requests.get(url, headers=headers, timeout=15)
         data = res.json()
         print("[DEBUG] Coinglass response:", data)
-        if not data.get("success"):
-            print(f"[COINGLASS ERROR] {data.get('message')}")
-            return []
-        return data.get("data", [])
+        # ساختار پاسخ Coinglass ممکنه تغییر کنه؛ با محافظه‌کاری برخورد می‌کنیم
+        if isinstance(data, dict):
+            ok = data.get("success")
+            if ok is False:
+                print(f"[COINGLASS ERROR] {data.get('message')}")
+                return []
+            return data.get("data", []) or []
+        return []
     except Exception as e:
         print(f"[COINGLASS EXCEPTION] {e}")
         return []
@@ -235,16 +261,22 @@ def signal_loop():
     while True:
         alerts = []
 
+        # نسبت لانگ/شورت
         data = get_long_short_ratios()
         for item in data:
-            symbol = item.get("symbol", "")
-            ratio = float(item.get("longShortRatio", 0))
-            if ratio > 1.5:
-                alerts.append(f"📈 LONG: {symbol} – {ratio:.2f}")
-            elif ratio < 0.7:
-                alerts.append(f"📉 SHORT: {symbol} – {ratio:.2f}")
+            try:
+                symbol = item.get("symbol", "")
+                ratio = float(item.get("longShortRatio", 0))
+                if ratio > 1.5:
+                    alerts.append(f"📈 LONG: {symbol} – {ratio:.2f}")
+                elif ratio < 0.7:
+                    alerts.append(f"📉 SHORT: {symbol} – {ratio:.2f}")
+            except Exception:
+                continue
 
-        for uid in get_all_users():
+        # تراکنش‌های بزرگ والت‌های ثبت‌شده
+        users = get_all_users()
+        for uid in users:
             print(f"[LOOP] Checking wallets for user {uid}")
             wallets = get_user_wallets(uid)
 
@@ -266,6 +298,12 @@ def signal_loop():
 
         time.sleep(SIGNAL_INTERVAL)
 
+def start_signal_thread():
+    """اجرای حلقه سیگنال در یک ترد جدا."""
+    t = threading.Thread(target=signal_loop, daemon=True)
+    t.start()
+    print("[THREAD] signal_loop thread started")
+
 # ---------- وبهوک ----------
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def getMessage():
@@ -278,9 +316,41 @@ def getMessage():
 def index():
     return "Bot is running!", 200
 
+@app.route("/healthz")
+def healthz():
+    return "ok", 200
+
+def ensure_webhook():
+    """وبهوک تلگرام را اگر لازم باشد ست/به‌روز می‌کند."""
+    if not WEBHOOK_URL:
+        print("[WEBHOOK] WEBHOOK_URL/RENDER_EXTERNAL_URL تعریف نشده؛ وبهوک ست نمی‌شود.")
+        return
+
+    try:
+        info = bot.get_webhook_info()
+        current = getattr(info, "url", "") if info else ""
+    except Exception as e:
+        print(f"[WEBHOOK] get_webhook_info error: {e}")
+        current = ""
+
+    if current != WEBHOOK_URL:
+        try:
+            bot.remove_webhook()
+        except Exception:
+            pass
+        try:
+            ok = bot.set_webhook(url=WEBHOOK_URL)
+            print(f"[WEBHOOK] set_webhook -> {ok}, url={WEBHOOK_URL}")
+        except Exception as e:
+            print(f"[WEBHOOK] set_webhook error: {e}")
+    else:
+        print(f"[WEBHOOK] already set: {WEBHOOK_URL}")
+
 # ---------- اجرای برنامه ----------
 if __name__ == "__main__":
     init_db()
-    start_signal_thread()
+    start_signal_thread()   # ✅ مشکل NameError حل شد
+    ensure_webhook()        # ✅ وبهوک خودکار (در Render با RENDER_EXTERNAL_URL)
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    # debug=False برای پایداری در Render
+    app.run(host="0.0.0.0", port=port, debug=False)
