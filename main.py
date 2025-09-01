@@ -31,7 +31,8 @@ bot = telebot.TeleBot(BOT_TOKEN)  # می‌تونی parse_mode="HTML" هم بد�
 app = Flask(__name__)
 
 CHECK_INTERVAL = 600    # هر 10 دقیقه (فعلاً استفاده نشده؛ برای توسعه‌های بعدی)
-SIGNAL_INTERVAL = 3600  # هر 1 ساعت
+SIGNAL_INTERVAL = 10  # فقط برای تست
+
 
 # ---------- دیتابیس ----------
 def get_connection():
