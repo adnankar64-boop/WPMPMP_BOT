@@ -13,26 +13,11 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY")
 COINGLASS_API_KEY = os.environ.get("COINGLASS_API_KEY")
 
-# آدرس وبهوک:
-# 1) اگر خودت WEBHOOK_URL را ست کنی، همان استفاده می‌شود.
-# 2) در غیر این صورت، اگر RENDER_EXTERNAL_URL موجود باشد از آن + /<BOT_TOKEN> ساخته می‌شود.
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-if not WEBHOOK_URL:
-    _render_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if _render_url and BOT_TOKEN:
-        WEBHOOK_URL = _render_url.rstrip("/") + "/" + BOT_TOKEN
-
-if not BOT_TOKEN:
-    raise RuntimeError("Environment variable BOT_TOKEN تنظیم نشده است.")
-if not DATABASE_URL:
-    raise RuntimeError("Environment variable DATABASE_URL تنظیم نشده است.")
-
-bot = telebot.TeleBot(BOT_TOKEN)  # می‌تونی parse_mode="HTML" هم بدی در صورت نیاز
+bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-CHECK_INTERVAL = 600    # هر 10 دقیقه (فعلاً استفاده نشده؛ برای توسعه‌های بعدی)
-SIGNAL_INTERVAL = 10  # فقط برای تست
-
+CHECK_INTERVAL = 600    # هر 10 دقیقه
+SIGNAL_INTERVAL = 60    # برای تست سریع، بعدا 3600
 
 # ---------- دیتابیس ----------
 def get_connection():
@@ -86,7 +71,7 @@ def get_user_wallets(user_id):
         wallets[row["coin_type"]].append(row["wallet_address"])
     return wallets
 
-# ---------- APIها ----------
+# ---------- API ها ----------
 def get_large_eth_tx(wallet):
     url = "https://api.etherscan.io/api"
     params = {
@@ -100,18 +85,13 @@ def get_large_eth_tx(wallet):
     }
     try:
         res = requests.get(url, params=params, timeout=15)
-        data = res.json()
-        txs = data.get("result", [])[:5] if isinstance(data, dict) else []
+        txs = res.json().get("result", [])[:5]
         alerts = []
         for tx in txs:
-            # بعضی وقت‌ها value رشته‌ای خیلی بزرگه
-            try:
-                eth_value = int(tx.get("value", "0")) / 1e18
-            except Exception:
-                eth_value = 0.0
-            if eth_value >= 1:
+            eth_value = int(tx["value"]) / 1e18
+            if eth_value >= 0.01:  # تست سریع، بعدا می‌توان به 1 برگرداند
                 alerts.append(
-                    f"🚨 تراکنش بزرگ شناسایی شد\n💰 {eth_value:.2f} ETH\n🔗 https://etherscan.io/tx/{tx.get('hash')}"
+                    f"🚨 تراکنش بزرگ ETH شناسایی شد\n💰 {eth_value:.4f} ETH\n🔗 https://etherscan.io/tx/{tx['hash']}"
                 )
         return alerts
     except Exception as e:
@@ -124,15 +104,13 @@ def get_large_sol_tx(wallet):
     try:
         res = requests.get(url, headers=headers, timeout=15)
         txs = res.json()
-        if not isinstance(txs, list):
-            return []
         alerts = []
         for tx in txs:
-            lamports = tx.get("lamport", 0) or 0
+            lamports = tx.get("lamport", 0)
             sol = lamports / 1e9
-            if sol >= 5:
+            if sol >= 0.1:  # تست سریع، بعدا 5
                 alerts.append(
-                    f"🚨 تراکنش بزرگ شناسایی شد\n💰 {sol:.2f} SOL\n🔗 https://solscan.io/tx/{tx.get('txHash')}"
+                    f"🚨 تراکنش بزرگ SOL شناسایی شد\n💰 {sol:.4f} SOL\n🔗 https://solscan.io/tx/{tx['txHash']}"
                 )
         return alerts
     except Exception as e:
@@ -141,19 +119,15 @@ def get_large_sol_tx(wallet):
 
 def get_long_short_ratios():
     url = "https://open-api.coinglass.com/public/v2/longShortRatio"
-    headers = {"coinglassSecret": COINGLASS_API_KEY or ""}
+    headers = {"coinglassSecret": COINGLASS_API_KEY}
     try:
         res = requests.get(url, headers=headers, timeout=15)
         data = res.json()
         print("[DEBUG] Coinglass response:", data)
-        # ساختار پاسخ Coinglass ممکنه تغییر کنه؛ با محافظه‌کاری برخورد می‌کنیم
-        if isinstance(data, dict):
-            ok = data.get("success")
-            if ok is False:
-                print(f"[COINGLASS ERROR] {data.get('message')}")
-                return []
-            return data.get("data", []) or []
-        return []
+        if not data.get("success"):
+            print(f"[COINGLASS ERROR] {data.get('message')}")
+            return []
+        return data.get("data", [])
     except Exception as e:
         print(f"[COINGLASS EXCEPTION] {e}")
         return []
@@ -262,45 +236,40 @@ def signal_loop():
     while True:
         alerts = []
 
-        # نسبت لانگ/شورت
+        # ---------- Coinglass ----------
         data = get_long_short_ratios()
         for item in data:
-            try:
-                symbol = item.get("symbol", "")
-                ratio = float(item.get("longShortRatio", 0))
-                if ratio > 1.5:
-                    alerts.append(f"📈 LONG: {symbol} – {ratio:.2f}")
-                elif ratio < 0.7:
-                    alerts.append(f"📉 SHORT: {symbol} – {ratio:.2f}")
-            except Exception:
-                continue
+            symbol = item.get("symbol", "")
+            ratio = float(item.get("longShortRatio", 0))
+            if ratio > 1.5:
+                alerts.append(f"📈 LONG: {symbol} – {ratio:.2f}")
+            elif ratio < 0.7:
+                alerts.append(f"📉 SHORT: {symbol} – {ratio:.2f}")
 
-        # تراکنش‌های بزرگ والت‌های ثبت‌شده
-        users = get_all_users()
-        for uid in users:
-            print(f"[LOOP] Checking wallets for user {uid}")
+        # ---------- Wallet Transactions ----------
+        for uid in get_all_users():
             wallets = get_user_wallets(uid)
 
             for eth_wallet in wallets["eth"]:
-                eth_alerts = get_large_eth_tx(eth_wallet)
-                alerts.extend(eth_alerts)
+                alerts.extend(get_large_eth_tx(eth_wallet))
 
             for sol_wallet in wallets["sol"]:
-                sol_alerts = get_large_sol_tx(sol_wallet)
-                alerts.extend(sol_alerts)
+                alerts.extend(get_large_sol_tx(sol_wallet))
 
-        print(f"[LOOP] Sending {len(alerts)} alerts")
+        # ---------- پیام آزمایشی ----------
+        alerts.append("🟢 پیام آزمایشی: ربات در حال کار است!")
+
+        # ---------- ارسال پیام ----------
         msg = "📊 سیگنال بازار:\n\n" + ("\n".join(alerts) if alerts else "❌ سیگنالی یافت نشد.")
         for uid in get_all_users():
             try:
-                bot.send_message(int(uid), msg)
+                bot.send_message(chat_id=int(uid), text=msg)
             except Exception as e:
                 print(f"[Telegram send error to {uid}]: {e}")
 
         time.sleep(SIGNAL_INTERVAL)
 
 def start_signal_thread():
-    """اجرای حلقه سیگنال در یک ترد جدا."""
     t = threading.Thread(target=signal_loop, daemon=True)
     t.start()
     print("[THREAD] signal_loop thread started")
@@ -317,50 +286,15 @@ def getMessage():
 def index():
     return "Bot is running!", 200
 
-@app.route("/healthz")
-def healthz():
-    return "ok", 200
-
-def ensure_webhook():
-    """وبهوک تلگرام را اگر لازم باشد ست/به‌روز می‌کند."""
-    if not WEBHOOK_URL:
-        print("[WEBHOOK] WEBHOOK_URL/RENDER_EXTERNAL_URL تعریف نشده؛ وبهوک ست نمی‌شود.")
-        return
-
-    try:
-        info = bot.get_webhook_info()
-        current = getattr(info, "url", "") if info else ""
-    except Exception as e:
-        print(f"[WEBHOOK] get_webhook_info error: {e}")
-        current = ""
-
-    if current != WEBHOOK_URL:
-        try:
-            bot.remove_webhook()
-        except Exception:
-            pass
-        try:
-            ok = bot.set_webhook(url=WEBHOOK_URL)
-            print(f"[WEBHOOK] set_webhook -> {ok}, url={WEBHOOK_URL}")
-        except Exception as e:
-            print(f"[WEBHOOK] set_webhook error: {e}")
-    else:
-        print(f"[WEBHOOK] already set: {WEBHOOK_URL}")
-
 # ---------- اجرای برنامه ----------
 if __name__ == "__main__":
-    import threading
-
-    # اجرای لوپ سیگنال‌ها در یک ترد جداگانه
-    signal_thread = threading.Thread(target=signal_loop, daemon=True)
-    signal_thread.start()
-    print("[THREAD] signal_loop thread started")
-
-    # اطلاع‌رسانی شروع شدن ربات
-    try:
-        bot.send_message(chat_id=160584976, text="✅ Bot restarted successfully and is live on Render!")
-    except Exception as e:
-        print(f"[ERROR] Could not send startup message: {e}")
-
-    # اجرای Flask
-    app.run(host="0.0.0.0", port=10000)
+    init_db()
+    start_signal_thread()
+    print("[BOT] Sending startup message")
+    for uid in get_all_users():
+        try:
+            bot.send_message(chat_id=int(uid), text="✅ Bot restarted successfully and is live on Render!")
+        except:
+            pass
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
