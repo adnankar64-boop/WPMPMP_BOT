@@ -1,28 +1,31 @@
+import os
 import threading
 import time
 from datetime import datetime, timedelta
 import requests
 import psycopg2
+from flask import Flask, request
 import telebot
 
 # ---------- تنظیمات ----------
-BOT_TOKEN = "اینجا_توکن_بات"
-ETHERSCAN_API_KEY = "اینجا_کلید_Etherscan"
-DEXCHECK_API_KEY = "اینجا_کلید_DexCheck"
-COINGLASS_API_KEY = "اینجا_کلید_Coinglass"
-
-DB_URL = "postgresql://user:pass@localhost:5432/dbname"  # دیتابیس Postgres
-SIGNAL_INTERVAL = 60  # ثانیه
-ETH_THRESHOLD = 1 * 10**18     # فقط بالای 1 ETH
-SOL_THRESHOLD = 50             # فقط بالای 50 SOL
-DEXCHECK_THRESHOLD = 100000    # فقط معاملات نهنگ‌ها بالای 100k$
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("توکن ربات در Environment Variable با نام BOT_TOKEN تعریف نشده است!")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+DB_URL = os.getenv("DB_URL", "postgresql://user:pass@localhost:5432/dbname")  # دیتابیس Postgres
+SIGNAL_INTERVAL = 60  # ثانیه
+
+# Threshold نمونه برای سیگنال‌ها
+ETH_THRESHOLD = 0.01
+SOL_THRESHOLD = 0.01
+HYPERLIQUID_THRESHOLD = 0.01
 
 # ---------- اتصال به دیتابیس ----------
 conn = psycopg2.connect(DB_URL)
 cur = conn.cursor()
 
+# اطمینان از وجود جداول
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -36,8 +39,7 @@ CREATE TABLE IF NOT EXISTS wallets (
 );
 CREATE TABLE IF NOT EXISTS signals (
     id SERIAL PRIMARY KEY,
-    wallet_id INT,
-    uniq_key TEXT,
+    wallet_id INT REFERENCES wallets(id),
     signal TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
@@ -50,112 +52,74 @@ def start(message):
     chat_id = message.chat.id
     cur.execute("INSERT INTO users (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO NOTHING;", (chat_id,))
     conn.commit()
-    bot.send_message(chat_id, "🟢 ربات استارت شد!\n➕ با /addwallet کیف‌پول اضافه کن.\n📋 با /listwallets لیست کیف‌پول‌ها رو ببین.\n❌ با /removewallet کیف‌پول حذف کن.")
+    bot.send_message(chat_id, "🟢 پیام آزمایشی اولیه: ربات با موفقیت استارت شد!")
 
 @bot.message_handler(commands=['addwallet'])
 def add_wallet(message):
     try:
         parts = message.text.split()
-        blockchain, address = parts[1].lower(), parts[2]
+        blockchain, address = parts[1], parts[2]
         chat_id = message.chat.id
         cur.execute("INSERT INTO wallets (user_id, blockchain, address) VALUES (%s, %s, %s);",
-                    (chat_id, blockchain, address))
+                    (chat_id, blockchain.lower(), address))
         conn.commit()
         bot.send_message(chat_id, f"✅ کیف پول {address} روی {blockchain} اضافه شد!")
     except Exception as e:
-        bot.send_message(chat_id, f"❌ خطا: {e}")
+        bot.send_message(chat_id, f"❌ خطا در افزودن کیف پول: {e}")
 
-@bot.message_handler(commands=['listwallets'])
-def list_wallets(message):
-    chat_id = message.chat.id
-    cur.execute("SELECT blockchain, address FROM wallets WHERE user_id=%s;", (chat_id,))
-    rows = cur.fetchall()
-    if not rows:
-        bot.send_message(chat_id, "❌ هیچ کیف‌پولی ثبت نشده است.")
-    else:
-        msg = "📋 لیست کیف‌پول‌های شما:\n\n"
-        for chain, addr in rows:
-            msg += f"🔗 {chain.upper()} → `{addr}`\n"
-        bot.send_message(chat_id, msg, parse_mode="Markdown")
-
-@bot.message_handler(commands=['removewallet'])
-def remove_wallet(message):
+# ---------- توابع دریافت سیگنال ----------
+def get_eth_signal(address):
+    ETHERSCAN_API = os.getenv("ETHERSCAN_API", "")
+    if not ETHERSCAN_API:
+        return None
     try:
-        parts = message.text.split()
-        blockchain, address = parts[1].lower(), parts[2]
-        chat_id = message.chat.id
-        cur.execute("DELETE FROM wallets WHERE user_id=%s AND blockchain=%s AND address=%s;",
-                    (chat_id, blockchain, address))
-        conn.commit()
-        bot.send_message(chat_id, f"🗑️ کیف پول {address} روی {blockchain} حذف شد!")
-    except Exception as e:
-        bot.send_message(chat_id, f"❌ خطا: {e}")
-
-# ---------- توابع API ----------
-def get_eth_transactions(address):
-    url = "https://api.etherscan.io/api"
-    params = {
-        "module": "account",
-        "action": "txlist",
-        "address": address,
-        "sort": "desc",
-        "apikey": ETHERSCAN_API_KEY
-    }
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        return r.json().get("result", []) if r.status_code == 200 else []
+        url = f"https://api.etherscan.io/api?module=account&action=txlist&address={address}&sort=desc&apikey={ETHERSCAN_API}"
+        res = requests.get(url).json()
+        txs = res.get("result", [])
+        for tx in txs[:5]:  # بررسی آخرین ۵ تراکنش
+            value = int(tx.get("value", 0)) / 1e18
+            if value >= ETH_THRESHOLD:
+                return f"📡 سیگنال ETH: تراکنش {value} ETH برای {address}"
     except:
-        return []
+        return None
+    return None
 
-def get_sol_transactions(address):
-    url = f"https://public-api.solscan.io/account/tokens?account={address}"
+def get_sol_signal(address):
     try:
-        r = requests.get(url, timeout=10)
-        return r.json() if r.status_code == 200 else []
+        url = f"https://api.mainnet-beta.solana.com"  # جایگزین API سولانا
+        # نمونه سیگنال
+        return f"📡 سیگنال SOL برای {address} (داده نمونه)"
     except:
-        return []
+        return None
 
-def get_dexcheck_whales():
-    url = "https://api.dexcheck.ai/v1/whales/trades"
-    headers = {"x-api-key": DEXCHECK_API_KEY}
+def get_hyperliquid_signal(address):
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        return r.json() if r.status_code == 200 else []
+        # نمونه سیگنال Hyperliquid
+        return f"📡 سیگنال Hyperliquid برای {address} (داده نمونه)"
     except:
-        return []
+        return None
 
-def get_hyperliquid_data():
-    url = "https://api.hyperliquid.xyz/info"
+def get_dexcheck_signal(address):
+    DEXCHECK_API_KEY = os.getenv("DEXCHECK_API_KEY", "")
+    if not DEXCHECK_API_KEY:
+        return None
     try:
-        r = requests.get(url, timeout=10)
-        return r.json() if r.status_code == 200 else {}
+        # نمونه درخواست
+        return f"📡 سیگنال DexCheck برای {address} (داده نمونه)"
     except:
-        return {}
+        return None
 
-def get_coinglass_data(symbol="BTC"):
-    url = f"https://open-api.coinglass.com/api/pro/v1/futures/openInterest?symbol={symbol}"
-    headers = {"coinglassSecret": COINGLASS_API_KEY}
+def get_coinglass_signal(address):
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        return r.json() if r.status_code == 200 else {}
+        # نمونه سیگنال CoinGlass
+        return f"📡 سیگنال CoinGlass برای {address} (داده نمونه)"
     except:
-        return {}
-
-# ---------- ارسال سیگنال ----------
-def send_signal(chat_id, wallet_id, uniq_key, text):
-    cur.execute("SELECT 1 FROM signals WHERE uniq_key=%s AND created_at > NOW() - INTERVAL '24 HOURS';",
-                (uniq_key,))
-    if cur.fetchone():
-        return
-    bot.send_message(chat_id, text)
-    cur.execute("INSERT INTO signals (wallet_id, uniq_key, signal) VALUES (%s, %s, %s);",
-                (wallet_id, uniq_key, text))
-    conn.commit()
+        return None
 
 # ---------- حلقه سیگنال ----------
-def signal_loop():
-    last_hyper_sent = datetime.now() - timedelta(minutes=10)
+last_sent_signals = {}
 
+def signal_loop():
     while True:
         try:
             cur.execute("SELECT chat_id FROM users;")
@@ -164,59 +128,33 @@ def signal_loop():
             for chat_id in users:
                 cur.execute("SELECT id, blockchain, address FROM wallets WHERE user_id=%s;", (chat_id,))
                 wallets = cur.fetchall()
+                if not wallets:
+                    bot.send_message(chat_id, "❌ هیچ کیف پولی ثبت نشده.")
+                    continue
 
                 for wallet_id, blockchain, address in wallets:
-                    if blockchain == "eth":
-                        txs = get_eth_transactions(address)
-                        if txs:
-                            tx = txs[0]
-                            if int(tx['value']) > ETH_THRESHOLD:
-                                uniq = f"eth_{tx['hash']}"
-                                msg = f"🟣 تراکنش بزرگ Ethereum\n🔗 {address}\n💰 مقدار: {int(tx['value'])/10**18} ETH"
-                                send_signal(chat_id, wallet_id, uniq, msg)
+                    signal_text = None
+                    if blockchain.lower() == "ethereum":
+                        signal_text = get_eth_signal(address)
+                    elif blockchain.lower() == "solana":
+                        signal_text = get_sol_signal(address)
+                    elif blockchain.lower() == "hyperliquid":
+                        signal_text = get_hyperliquid_signal(address)
+                    elif blockchain.lower() == "dexcheck":
+                        signal_text = get_dexcheck_signal(address)
+                    elif blockchain.lower() == "coinglass":
+                        signal_text = get_coinglass_signal(address)
 
-                    elif blockchain == "sol":
-                        txs = get_sol_transactions(address)
-                        if txs:
-                            balance = sum([float(t.get("tokenAmount", 0)) for t in txs])
-                            if balance > SOL_THRESHOLD:
-                                uniq = f"sol_{datetime.now().timestamp()}"
-                                msg = f"🟡 تراکنش بزرگ Solana\n🔗 {address}\n💰 موجودی: {balance} SOL"
-                                send_signal(chat_id, wallet_id, uniq, msg)
-
-                # --- DexCheck ---
-                whales = get_dexcheck_whales()
-                if whales and isinstance(whales, list):
-                    for w in whales[:5]:
-                        try:
-                            usd = float(w.get("amountUsd", 0))
-                            if usd > DEXCHECK_THRESHOLD:
-                                uniq = f"dex_{w.get('txHash')}"
-                                msg = f"🐋 Whale Trade (DexCheck)\n🪙 {w.get('symbol')} | 💵 {usd}$"
-                                send_signal(chat_id, 0, uniq, msg)
-                        except:
-                            continue
-
-                # --- Hyperliquid (هر 5 دقیقه یکبار) ---
-                if datetime.now() - last_hyper_sent > timedelta(minutes=5):
-                    hyper = get_hyperliquid_data()
-                    if hyper:
-                        uniq = f"hyper_{datetime.now().strftime('%H%M')}"
-                        msg = f"🌐 Hyperliquid Update\n📊 {str(hyper)[:200]}..."
-                        send_signal(chat_id, 0, uniq, msg)
-                        last_hyper_sent = datetime.now()
-
-                # --- Coinglass ---
-                cg = get_coinglass_data("BTC")
-                if cg and cg.get("data"):
-                    oi = cg['data'][0].get("openInterest", 0)
-                    if float(oi) > 1000000000:
-                        uniq = f"cg_{datetime.now().strftime('%H%M')}"
-                        msg = f"📈 Coinglass BTC OI\n💰 {oi}"
-                        send_signal(chat_id, 0, uniq, msg)
-
+                    if signal_text:
+                        last_time = last_sent_signals.get((chat_id, wallet_id))
+                        if not last_time or datetime.now() - last_time > timedelta(hours=24):
+                            bot.send_message(chat_id, signal_text)
+                            last_sent_signals[(chat_id, wallet_id)] = datetime.now()
+                            cur.execute("INSERT INTO signals (wallet_id, signal) VALUES (%s, %s);",
+                                        (wallet_id, signal_text))
+                            conn.commit()
         except Exception as e:
-            print("⚠️ Loop error:", e)
+            print(f"[ERROR] signal_loop: {e}")
 
         # پاک کردن سیگنال‌های قدیمی
         cur.execute("DELETE FROM signals WHERE created_at < NOW() - INTERVAL '24 HOURS';")
