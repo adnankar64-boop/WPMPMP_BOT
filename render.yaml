@@ -1,18 +1,14 @@
 services:
   - type: web
-    name: wpmpmp-bot
+    name: telegram-signal-bot
     env: python
-    plan: free
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "python main.py"
+    startCommand: "python app.py"
     envVars:
       - key: BOT_TOKEN
-        sync: false   # مقدارش رو دستی توی داشبورد Render وارد کن
+        sync: false   # مقدار رو خودت دستی توی داشبورد Render وارد کن
       - key: DB_URL
-        fromDatabase:
-          name: wpmpmp-db
-          property: connectionString
-
-databases:
-  - name: wpmpmp-db
+        sync: false   # آدرس Postgres از Render
+      - key: RENDER_EXTERNAL_URL
+        value: https://telegram-signal-bot.onrender.com   # بعد از ساخت سرویس، دامنه رو جایگزین کن
     plan: free
