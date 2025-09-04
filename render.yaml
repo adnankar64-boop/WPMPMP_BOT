@@ -1,15 +1,18 @@
 services:
   - type: web
-    name: whale_signal_bot
+    name: wpmpmp-bot
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py"
     envVars:
       - key: BOT_TOKEN
-        value: "توکن ربات تلگرام"
-      - key: DATABASE_URL
-        value: "آدرس دیتابیس"
-      - key: ETHERSCAN_API_KEY
-        value: "کلید اتر اسکن"
-      - key: COINGLASS_API_KEY
-        value: "کلید کوین گلاس"
+        sync: false   # مقدارش رو دستی توی داشبورد Render وارد کن
+      - key: DB_URL
+        fromDatabase:
+          name: wpmpmp-db
+          property: connectionString
+
+databases:
+  - name: wpmpmp-db
     plan: free
-    runtime: python
-    startCommand: python main.py
