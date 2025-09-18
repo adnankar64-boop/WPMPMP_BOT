@@ -11,8 +11,17 @@ import logging
 
 # ---------- تنظیمات ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-DB_URL = os.getenv("DB_URL")  # SSL-ready: ?sslmode=require
+DB_URL = os.getenv("DB_URL", "").strip().replace('"', "").replace("'", "")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")  # مثال: https://your-app.onrender.com
+
+# اطمینان از اینکه sslmode=require اضافه شده
+if "sslmode" not in DB_URL:
+    if "?" in DB_URL:
+        DB_URL += "&sslmode=require"
+    else:
+        DB_URL += "?sslmode=require"
+
+print(f"🔗 Final DB_URL = [{DB_URL}]")  # برای دیباگ در لاگ Render
 
 if not BOT_TOKEN or ":" not in BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN معتبر نیست. مقدار درست رو در Environment Render وارد کن.")
@@ -157,8 +166,8 @@ def index():
 
 # ---------- اجرای برنامه ----------
 if __name__ == "__main__":
-    # ساخت Connection Pool
-    pool = SimpleConnectionPool(1, 10, DB_URL)
+    # ساخت Connection Pool با sslmode=require
+    pool = SimpleConnectionPool(1, 10, dsn=DB_URL, sslmode="require")
     
     # ایجاد جدول‌ها
     init_db()
