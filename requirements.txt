@@ -1,4 +1,4 @@
 flask
 requests
 pyTelegramBotAPI
-psycopg2-binary
+psycopg[binary]==3.1.18
