@@ -9,46 +9,78 @@ from flask import Flask, request
 import telebot
 import logging
 
-# ---------- تنظیمات ----------
+# ---------- تنظیمات محیط ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DB_URL = os.getenv("DB_URL", "").strip().replace('"', "").replace("'", "")
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")  # مثال: https://your-app.onrender.com
-
-# اطمینان از اینکه sslmode=require اضافه شده
-if "sslmode" not in DB_URL:
-    if "?" in DB_URL:
-        DB_URL += "&sslmode=require"
-    else:
-        DB_URL += "?sslmode=require"
-
-print(f"🔗 Final DB_URL = [{DB_URL}]")  # برای دیباگ در لاگ Render
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 if not BOT_TOKEN or ":" not in BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN معتبر نیست. مقدار درست رو در Environment Render وارد کن.")
-
+    raise ValueError("❌ BOT_TOKEN معتبر نیست — مقدار درست را در Environment وارد کنید.")
 if not DB_URL:
-    raise ValueError("❌ DB_URL در Environment ست نشده است. باید SSL-ready باشد.")
-
+    raise ValueError("❌ DB_URL ست نشده است.")
 if not RENDER_URL:
-    raise ValueError("❌ RENDER_EXTERNAL_URL در Environment ست نشده است.")
+    raise ValueError("❌ RENDER_EXTERNAL_URL ست نشده است.")
+
+# اطمینان از sslmode=require
+if "sslmode" not in DB_URL:
+    DB_URL += "&sslmode=require" if "?" in DB_URL else "?sslmode=require"
+
+print(f"🔗 Final DB_URL = [{DB_URL}]")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 telebot.logger.setLevel(logging.DEBUG)
 app = Flask(__name__)
 
-# ---------- Connection Pool و Context Manager ----------
-pool = None  # ساخته می‌شود در main
+# ---------- Pool با تنظیمات keepalive ----------
+pool = None
+
+def create_pool():
+    """ایجاد Connection Pool جدید با تنظیمات پایدار"""
+    global pool
+    pool = SimpleConnectionPool(
+        1, 10,
+        dsn=DB_URL,
+        sslmode="require",
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=3
+    )
+    print("✅ Connection Pool ساخته شد.")
+
+
+# ---------- Safe Connection Manager ----------
+def safe_get_conn():
+    """دریافت اتصال سالم از pool؛ در صورت قطع، pool بازسازی می‌شود."""
+    global pool
+    try:
+        conn = pool.getconn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1;")
+        return conn
+    except Exception as e:
+        print(f"[POOL ERROR] {e} → بازسازی pool ...")
+        try:
+            pool.closeall()
+        except:
+            pass
+        time.sleep(2)
+        create_pool()
+        conn = pool.getconn()
+        return conn
 
 @contextmanager
 def get_db_conn():
-    conn = pool.getconn()
+    conn = safe_get_conn()
     try:
         yield conn
     finally:
         pool.putconn(conn)
 
-# ---------- ایجاد جدول‌ها ----------
+
+# ---------- ایجاد جداول ----------
 def init_db():
+    print("🧱 ایجاد یا بررسی جداول دیتابیس ...")
     with get_db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -70,6 +102,8 @@ def init_db():
             );
             """)
             conn.commit()
+    print("✅ جداول آماده هستند.")
+
 
 # ---------- دستورات تلگرام ----------
 @bot.message_handler(commands=['start'])
@@ -83,9 +117,10 @@ def start(message):
                     (chat_id,)
                 )
                 conn.commit()
-        bot.send_message(chat_id, "🟢 ربات با موفقیت استارت شد!\nبرای افزودن کیف پول: /addwallet chain address")
+        bot.send_message(chat_id, "🟢 ربات فعال شد!\nبرای افزودن کیف پول:\n`/addwallet chain address`", parse_mode="Markdown")
     except Exception as e:
         bot.send_message(chat_id, f"❌ خطا در ثبت کاربر: {e}")
+
 
 @bot.message_handler(commands=['addwallet'])
 def add_wallet(message):
@@ -105,16 +140,18 @@ def add_wallet(message):
                     (chat_id, blockchain.lower(), address)
                 )
                 conn.commit()
-        bot.send_message(chat_id, f"✅ کیف پول {address} روی {blockchain} اضافه شد!")
+        bot.send_message(chat_id, f"✅ کیف پول {address} روی {blockchain.upper()} اضافه شد!")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ خطا در افزودن کیف پول: {e}")
+
 
 # ---------- حلقه سیگنال ----------
 last_sent_signals = {}
 
 def fetch_signals(blockchain, address):
-    # اینجا می‌تونی API واقعی اضافه کنی
-    return f"📡 سیگنال {blockchain.upper()} برای:\n🔗 {address}\n(داده نمونه)"
+    # داده نمونه (میتوان API واقعی جایگزین کرد)
+    return f"📡 سیگنال {blockchain.upper()} برای:\n🔗 {address}\n(نمونه تستی)"
+
 
 def signal_loop():
     while True:
@@ -122,7 +159,7 @@ def signal_loop():
             with get_db_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT chat_id FROM users;")
-                    users = [row[0] for row in cur.fetchall()]
+                    users = [r[0] for r in cur.fetchall()]
 
                     for chat_id in users:
                         cur.execute("SELECT id, blockchain, address FROM wallets WHERE user_id=%s;", (chat_id,))
@@ -144,42 +181,43 @@ def signal_loop():
                                 except Exception as e:
                                     print(f"[SEND ERROR] {e}")
 
-                    # پاک کردن سیگنال‌های قدیمی
+                    # حذف سیگنال‌های قدیمی‌تر از ۲۴ ساعت
                     cur.execute("DELETE FROM signals WHERE created_at < NOW() - INTERVAL '24 HOURS';")
                     conn.commit()
+        except psycopg2.OperationalError as e:
+            print(f"[DB CONNECTION LOST] {e} → retrying in 5s...")
+            time.sleep(5)
+            continue
         except Exception as e:
             print(f"[LOOP ERROR] {e}")
 
         time.sleep(60)
 
+
 # ---------- Flask + Webhook ----------
 @app.route("/" + BOT_TOKEN, methods=['POST'])
 def webhook():
-    json_str = request.get_data().decode('UTF-8')
-    update = telebot.types.Update.de_json(json_str)
+    update = telebot.types.Update.de_json(request.get_data().decode('utf-8'))
     bot.process_new_updates([update])
     return "OK", 200
+
 
 @app.route("/")
 def index():
     return "🤖 Bot is running!", 200
 
+
 # ---------- اجرای برنامه ----------
 if __name__ == "__main__":
-    # ساخت Connection Pool با sslmode=require
-    pool = SimpleConnectionPool(1, 10, dsn=DB_URL, sslmode="require")
-    
-    # ایجاد جدول‌ها
+    create_pool()
     init_db()
 
-    # ست کردن وبهوک
     bot.remove_webhook()
     bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
-    print("🚀 Bot starting with webhook...")
+    print("🚀 Bot started with webhook:", f"{RENDER_URL}/{BOT_TOKEN}")
 
     # اجرای حلقه سیگنال در بک‌گراند
-    t = threading.Thread(target=signal_loop, daemon=True)
-    t.start()
+    threading.Thread(target=signal_loop, daemon=True).start()
 
     # اجرای Flask
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
