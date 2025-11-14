@@ -2,3 +2,5 @@ flask
 requests
 pyTelegramBotAPI
 psycopg2-binary==2.9.9
+python-telegram-bot==13.15
+
