@@ -24,6 +24,8 @@ from telegram.ext import (
 from telegram.utils.request import Request
 from telegram.error import TelegramError
 
+from flask import Flask   # 📌 اضافه شده برای Render
+
 
 # ---------------- CONFIG ----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -179,35 +181,33 @@ dispatcher.add_handler(CommandHandler("test", cmd_test, pass_args=True))
 
 # ---------------- POLLER THREAD ----------------
 def poller_thread():
-    """
-    این تابع هر POLL_INTERVAL ثانیه یکبار اجرا می‌شود.
-    می‌توانی اینجا دیتا از API ها بگیری و برای چت‌ها بفرستی.
-    فعلاً ساده نگه‌داشتم — خطا ندارد و پایدار است.
-    """
     while True:
         try:
             wallets = load_wallets()
             logger.info(f"Polling wallets... count={len(wallets)}")
-
-            # مثال: در اینجا می‌توانی کار واقعی انجام دهی
-            # مثل گرفتن موجودی، قیمت، سیگنال و ارسال پیام
-            
             time.sleep(POLL_INTERVAL)
-
         except Exception as e:
             logger.error(f"poller_thread error: {e}")
             time.sleep(5)
 
 
+# ---------------- Flask KEEP-ALIVE (for Render) ----------------
+app = Flask(__name__)
+
+@app.get("/")
+def home():
+    return "Bot is running", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+
 # ---------------- main ----------------
 def main():
-    # poller background thread
     threading.Thread(target=poller_thread, daemon=True).start()
+    threading.Thread(target=run_flask, daemon=True).start()
 
     logger.info("Starting bot polling ...")
     updater.start_polling()
     updater.idle()
-
-
-if __name__ == "__main__":
-    main()
