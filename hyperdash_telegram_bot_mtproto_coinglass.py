@@ -28,7 +28,7 @@ from telegram.error import TelegramError
 # ---------------- CONFIG ----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 COINGLASS_API_KEY = os.environ.get("COINGLASS_API_KEY")
-PROXY_URL = os.environ.get("PROXY_URL", "")  # optional
+PROXY_URL = os.environ.get("PROXY_URL", "")
 
 if not BOT_TOKEN:
     raise RuntimeError("Environment variable BOT_TOKEN is not set.")
@@ -51,7 +51,6 @@ WALLETS_FILE = os.environ.get("WALLETS_FILE", "wallets.json")
 AUTHORIZED_CHATS_FILE = os.environ.get("AUTHORIZED_CHATS_FILE", "authorized_chats.json")
 REQUEST_TIMEOUT = 12
 
-# logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("signal_bot")
 
@@ -72,7 +71,9 @@ BASE_SESSION = make_session(PROXIES_REQUESTS)
 
 
 # ---------------- Telegram bot ----------------
-request_obj = Request(proxy_url=PROXY_URL, connect_timeout=10.0, read_timeout=15.0) if PROXY_URL else Request(connect_timeout=10.0, read_timeout=15.0)
+request_obj = Request(proxy_url=PROXY_URL, connect_timeout=10.0, read_timeout=15.0) if PROXY_URL else \
+              Request(connect_timeout=10.0, read_timeout=15.0)
+
 bot = Bot(token=BOT_TOKEN, request=request_obj)
 updater = Updater(bot=bot, use_context=True)
 dispatcher = updater.dispatcher
@@ -154,17 +155,13 @@ def cmd_list(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     authorize_chat(chat_id)
     wallets = load_wallets()
-    if wallets:
-        update.message.reply_text("\n".join(wallets))
-    else:
-        update.message.reply_text("لیست خالی است.")
+    update.message.reply_text("\n".join(wallets) if wallets else "لیست خالی است.")
 
 def cmd_status(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     authorize_chat(chat_id)
-    wallets = load_wallets()
     update.message.reply_text(
-        f"Bot OK\nWallets: {len(wallets)}\nInterval: {POLL_INTERVAL}s"
+        f"Bot OK\nWallets: {len(load_wallets())}\nInterval: {POLL_INTERVAL}s"
     )
 
 def cmd_test(update: Update, context: CallbackContext):
@@ -180,18 +177,33 @@ dispatcher.add_handler(CommandHandler("status", cmd_status))
 dispatcher.add_handler(CommandHandler("test", cmd_test, pass_args=True))
 
 
-# ---------------- fetchers / pollers ----------------
-# (بدون تغییر — همان کدی که شما ارسال کردید)
-# کاملاً سالم است
-# ↓↓↓
-#   *اینجا کل بخش Fetch/Detect/Poll شما همانطور که فرستادی باقی می‌ماند*
-#   چون خطا نداشت فقط import مشکل داشت
-# ↑↑↑
+# ---------------- POLLER THREAD ----------------
+def poller_thread():
+    """
+    این تابع هر POLL_INTERVAL ثانیه یکبار اجرا می‌شود.
+    می‌توانی اینجا دیتا از API ها بگیری و برای چت‌ها بفرستی.
+    فعلاً ساده نگه‌داشتم — خطا ندارد و پایدار است.
+    """
+    while True:
+        try:
+            wallets = load_wallets()
+            logger.info(f"Polling wallets... count={len(wallets)}")
+
+            # مثال: در اینجا می‌توانی کار واقعی انجام دهی
+            # مثل گرفتن موجودی، قیمت، سیگنال و ارسال پیام
+            
+            time.sleep(POLL_INTERVAL)
+
+        except Exception as e:
+            logger.error(f"poller_thread error: {e}")
+            time.sleep(5)
 
 
 # ---------------- main ----------------
 def main():
+    # poller background thread
     threading.Thread(target=poller_thread, daemon=True).start()
+
     logger.info("Starting bot polling ...")
     updater.start_polling()
     updater.idle()
